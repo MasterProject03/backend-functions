@@ -11,8 +11,8 @@ var sourcesRouter *mux.Router
 
 func init() {
 	sourcesRouter = mux.NewRouter().StrictSlash(false)
-	sourcesRouter.Path("/").Methods(http.MethodPost).HandlerFunc(WithJSON(addSource))
 	sourcesRouter.Path("/").Methods(http.MethodGet).HandlerFunc(WithJSON(listSources))
+	sourcesRouter.Path("/").Methods(http.MethodPost).HandlerFunc(WithJSON(addSource))
 	sourcesRouter.Path("/{id}").Methods(http.MethodDelete).HandlerFunc(WithJSON(deleteSource))
 	sourcesRouter.NotFoundHandler = WithJSON(NotFoundHTTP)
 }
@@ -22,11 +22,11 @@ func SourcesHTTP(w http.ResponseWriter, r *http.Request) {
 	sourcesRouter.ServeHTTP(w, r)
 }
 
-func addSource(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
+func listSources(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 	// TODO
 }
 
-func listSources(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
+func addSource(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 	// TODO
 }
 

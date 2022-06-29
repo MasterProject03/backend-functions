@@ -9,11 +9,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"cloud.google.com/go/datastore"
 	"github.com/gorilla/mux"
+	"google.golang.org/api/iterator"
 )
 
 type User struct {
@@ -22,6 +26,7 @@ type User struct {
 	Email            string
 	PrivateKey       []byte `datastore:",noindex"`
 	KeyHash          string
+	Moderator        bool
 	RegistrationDate time.Time
 }
 
@@ -33,6 +38,7 @@ func init() {
 	accountsRouter.Path("/{id}").Methods(http.MethodGet).HandlerFunc(WithJSON(getUser))
 	accountsRouter.Path("/{id}").Methods(http.MethodPatch).HandlerFunc(WithJSON(editUser))
 	accountsRouter.Path("/{id}").Methods(http.MethodDelete).HandlerFunc(WithJSON(deleteUser))
+	accountsRouter.Path("/{id}/posts").Methods(http.MethodGet).HandlerFunc(WithJSON(getUserPosts))
 	accountsRouter.NotFoundHandler = WithJSON(NotFoundHTTP)
 }
 
@@ -41,31 +47,54 @@ func AccountsHTTP(w http.ResponseWriter, r *http.Request) {
 	accountsRouter.ServeHTTP(w, r)
 }
 
-func GetUser(w http.ResponseWriter, out *json.Encoder, r *http.Request) (*datastore.Key, *User, bool) {
-	id := mux.Vars(r)["id"]
+func GetUserByEmail(email string) (*datastore.Key, *User, error) {
+	ctx := context.Background()
+	query := datastore.NewQuery("User").
+		FilterField("Email", "=", strings.ToLower(email)).
+		Limit(1)
+	it := datastoreClient.Run(ctx, query)
 
+	var user User
+	key, err := it.Next(&user)
+	if err == iterator.Done {
+		return nil, nil, fmt.Errorf("no user with email %s", email)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return key, &user, nil
+}
+
+func GetUserById(id string) (*datastore.Key, *User, error) {
 	ctx := context.Background()
 	key, err := datastore.DecodeKey(id)
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		out.Encode(map[string]string{
-			"error": "failed to parse user ID",
-			"trace": err.Error(),
-		})
-		return nil, nil, false
+		return nil, nil, err
 	}
 
 	var user User
 	if err = datastoreClient.Get(ctx, key, &user); err != nil {
+		return nil, nil, err
+	}
+
+	return key, &user, nil
+}
+
+func GetUser(w http.ResponseWriter, out *json.Encoder, r *http.Request) (*datastore.Key, *User, bool) {
+	id := mux.Vars(r)["id"]
+
+	key, user, err := GetUserById(id)
+	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		out.Encode(map[string]string{
+		out.Encode(map[string]interface{}{
 			"error": "failed to find user",
 			"trace": err.Error(),
 		})
 		return nil, nil, false
 	}
 
-	return key, &user, true
+	return key, user, true
 }
 
 func createUser(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
@@ -81,36 +110,52 @@ func createUser(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 
 	if d.FirstName == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		out.Encode(map[string]string{
+		out.Encode(map[string]interface{}{
 			"error": "first_name cannot be empty",
 		})
 		return
 	} else if d.LastName == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		out.Encode(map[string]string{
+		out.Encode(map[string]interface{}{
 			"error": "last_name cannot be empty",
 		})
 		return
 	} else if d.Email == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		out.Encode(map[string]string{
+		out.Encode(map[string]interface{}{
 			"error": "email cannot be empty",
 		})
 		return
 	} else if d.Password == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		out.Encode(map[string]string{
+		out.Encode(map[string]interface{}{
 			"error": "password cannot be empty",
 		})
 		return
 	}
 
-	// TODO: Check if Email is used
+	_, existingUser, err := GetUserByEmail(d.Email)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		out.Encode(map[string]interface{}{
+			"error": "failed to check email availability",
+			"trace": err.Error(),
+		})
+		return
+	}
+	if existingUser != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		out.Encode(map[string]interface{}{
+			"error": "email already taken",
+			"trace": nil,
+		})
+		return
+	}
 
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		out.Encode(map[string]string{
+		out.Encode(map[string]interface{}{
 			"error": "failed to generate RSA key",
 			"trace": err.Error(),
 		})
@@ -123,7 +168,7 @@ func createUser(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 	pemBlock, err = x509.EncryptPEMBlock(rand.Reader, pemBlock.Type, pemBlock.Bytes, []byte(d.Password), x509.PEMCipherAES256)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		out.Encode(map[string]string{
+		out.Encode(map[string]interface{}{
 			"error": "failed to encrypt RSA key",
 			"trace": err.Error(),
 		})
@@ -133,7 +178,7 @@ func createUser(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 	cert, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		out.Encode(map[string]string{
+		out.Encode(map[string]interface{}{
 			"error": "failed to derive public RSA key",
 			"trace": err.Error(),
 		})
@@ -144,7 +189,7 @@ func createUser(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 	_, err = hash.Write(cert)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		out.Encode(map[string]string{
+		out.Encode(map[string]interface{}{
 			"error": "failed to hash public RSA key",
 			"trace": err.Error(),
 		})
@@ -155,9 +200,10 @@ func createUser(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 	user := User{
 		FirstName:        d.FirstName,
 		LastName:         d.LastName,
-		Email:            d.Email,
+		Email:            strings.ToLower(d.Email),
 		PrivateKey:       pem.EncodeToMemory(pemBlock),
 		KeyHash:          keyHash,
+		Moderator:        false,
 		RegistrationDate: time.Now(),
 	}
 
@@ -165,7 +211,7 @@ func createUser(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 	key, err := datastoreClient.Put(ctx, datastore.IncompleteKey("User", nil), &user)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		out.Encode(map[string]string{
+		out.Encode(map[string]interface{}{
 			"error": "failed to save user",
 			"trace": err.Error(),
 		})
@@ -173,12 +219,13 @@ func createUser(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
-	out.Encode(map[string]string{
+	out.Encode(map[string]interface{}{
 		"id":                key.Encode(),
 		"first_name":        user.FirstName,
 		"last_name":         user.LastName,
 		"email":             user.Email,
 		"key_hash":          user.KeyHash,
+		"moderator":         strconv.FormatBool(user.Moderator),
 		"registration_date": user.RegistrationDate.String(),
 	})
 }
@@ -190,12 +237,13 @@ func getUser(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
-	out.Encode(map[string]string{
+	out.Encode(map[string]interface{}{
 		"id":                key.Encode(),
 		"first_name":        user.FirstName,
 		"last_name":         user.LastName,
 		"email":             user.Email,
 		"key_hash":          user.KeyHash,
+		"moderator":         strconv.FormatBool(user.Moderator),
 		"registration_date": user.RegistrationDate.String(),
 	})
 }
@@ -215,26 +263,43 @@ func editUser(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 		return
 	}
 
-	if d.FirstName != "" {
+	if d.FirstName != "" && d.FirstName != user.FirstName {
 		user.FirstName = d.FirstName
 	}
 
-	if d.LastName != "" {
+	if d.LastName != "" && d.LastName != user.LastName {
 		user.LastName = d.LastName
 	}
 
-	if d.Email != "" {
-		// TODO: Check if Email is used
-		user.Email = d.Email
+	if d.Email != "" && !strings.EqualFold(d.Email, user.Email) {
+		_, existingUser, err := GetUserByEmail(d.Email)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			out.Encode(map[string]interface{}{
+				"error": "failed to check email availability",
+				"trace": err.Error(),
+			})
+			return
+		}
+		if existingUser != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			out.Encode(map[string]interface{}{
+				"error": "email already taken",
+				"trace": nil,
+			})
+			return
+		}
+
+		user.Email = strings.ToLower(d.Email)
 	}
 
 	// TODO: Changing password
 
 	ctx := context.Background()
-	key, err := datastoreClient.Put(ctx, key, &user)
+	key, err := datastoreClient.Put(ctx, key, user)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		out.Encode(map[string]string{
+		out.Encode(map[string]interface{}{
 			"error": "failed to save user",
 			"trace": err.Error(),
 		})
@@ -242,12 +307,13 @@ func editUser(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
-	out.Encode(map[string]string{
+	out.Encode(map[string]interface{}{
 		"id":                key.Encode(),
 		"first_name":        user.FirstName,
 		"last_name":         user.LastName,
 		"email":             user.Email,
 		"key_hash":          user.KeyHash,
+		"moderator":         strconv.FormatBool(user.Moderator),
 		"registration_date": user.RegistrationDate.String(),
 	})
 }
@@ -261,7 +327,7 @@ func deleteUser(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 	ctx := context.Background()
 	if err := datastoreClient.Delete(ctx, key); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		out.Encode(map[string]string{
+		out.Encode(map[string]interface{}{
 			"error": "failed to delete user",
 			"trace": err.Error(),
 		})
@@ -269,12 +335,27 @@ func deleteUser(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
-	out.Encode(map[string]string{
+	out.Encode(map[string]interface{}{
 		"id":                key.Encode(),
 		"first_name":        user.FirstName,
 		"last_name":         user.LastName,
 		"email":             user.Email,
 		"key_hash":          user.KeyHash,
+		"moderator":         strconv.FormatBool(user.Moderator),
 		"registration_date": user.RegistrationDate.String(),
+	})
+}
+
+func getUserPosts(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
+	// key, user, ok := GetUser(w, out, r)
+	// if !ok {
+	// 	return
+	// }
+
+	// TODO
+
+	w.WriteHeader(http.StatusOK)
+	out.Encode(map[string]interface{}{
+		"posts": []interface{}{},
 	})
 }

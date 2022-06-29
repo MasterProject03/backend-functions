@@ -48,7 +48,7 @@ func WithMethods(handlers map[string]JSONHandler) JSONHandler {
 
 func NotFoundHTTP(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
-	out.Encode(map[string]string{
+	out.Encode(map[string]interface{}{
 		"error": fmt.Sprintf("endpoint %s %s not found", r.Method, r.URL.Path),
 	})
 }
@@ -56,7 +56,7 @@ func NotFoundHTTP(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 func ParseBody(d interface{}, w http.ResponseWriter, out *json.Encoder, r *http.Request) bool {
 	if err := json.NewDecoder(r.Body).Decode(d); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		out.Encode(map[string]string{
+		out.Encode(map[string]interface{}{
 			"error": "failed to parse body",
 			"trace": err.Error(),
 		})
