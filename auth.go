@@ -141,6 +141,14 @@ func getAuthCA(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 	}
 
 	publicKeyBytes, err := x509.MarshalPKIXPublicKey(jwtPublicKey)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		out.Encode(map[string]interface{}{
+			"error": "failed to format public key",
+			"trace": err.Error(),
+		})
+		return
+	}
 
 	w.WriteHeader(http.StatusOK)
 	out.Encode(map[string]interface{}{
