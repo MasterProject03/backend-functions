@@ -169,14 +169,11 @@ func GetAuthUser(r *http.Request) (*datastore.Key, *User, error) {
 }
 
 func getMe(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
-	tokenString := mux.Vars(r)["token"]
-
-	key, user, err := ParseToken(tokenString, false, false)
+	key, user, err := GetAuthUser(r)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		out.Encode(map[string]interface{}{
-			"valid": true,
-			"error": "invalid token",
+			"error": "unauthorized",
 			"trace": err.Error(),
 		})
 		return
