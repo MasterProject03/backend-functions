@@ -23,8 +23,8 @@ type User struct {
 	FirstName        string
 	LastName         string
 	Email            string
-	PrivateKey       []byte `datastore:",noindex"`
-	KeyHash          string
+	PrivateKey       string `datastore:",noindex"`
+	PublicKey        string
 	Moderator        bool
 	RegistrationDate time.Time
 }
@@ -38,6 +38,7 @@ func init() {
 	accountsRouter.Path("/{id}").Methods(http.MethodPatch).HandlerFunc(WithJSON(editUser))
 	accountsRouter.Path("/{id}").Methods(http.MethodDelete).HandlerFunc(WithJSON(deleteUser))
 	accountsRouter.Path("/{id}/posts").Methods(http.MethodGet).HandlerFunc(WithJSON(getUserPosts))
+	accountsRouter.Path("/{id}/ca").Methods(http.MethodGet).HandlerFunc(WithJSON(getUserCA))
 	accountsRouter.NotFoundHandler = WithJSON(NotFoundHTTP)
 }
 
@@ -93,6 +94,20 @@ func GetUser(w http.ResponseWriter, out *json.Encoder, r *http.Request) (*datast
 	}
 
 	return key, user, true
+}
+
+func GetUserKeyHash(user *User) (*string, error) {
+	pemBlock, _ := pem.Decode([]byte(user.PublicKey))
+
+	hash := sha256.New()
+	_, err := hash.Write(pemBlock.Bytes)
+	if err != nil {
+		return nil, err
+	}
+
+	keyHash := base64.StdEncoding.EncodeToString(hash.Sum(nil))
+
+	return &keyHash, nil
 }
 
 func createUser(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
@@ -176,30 +191,21 @@ func createUser(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		out.Encode(map[string]interface{}{
-			"error": "failed to derive public RSA key",
+			"error": "failed to derive public key",
 			"trace": err.Error(),
 		})
 		return
 	}
-
-	hash := sha256.New()
-	_, err = hash.Write(cert)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		out.Encode(map[string]interface{}{
-			"error": "failed to hash public RSA key",
-			"trace": err.Error(),
-		})
-		return
-	}
-	keyHash := base64.StdEncoding.EncodeToString(hash.Sum(nil))
 
 	user := User{
-		FirstName:        d.FirstName,
-		LastName:         d.LastName,
-		Email:            strings.ToLower(d.Email),
-		PrivateKey:       pem.EncodeToMemory(pemBlock),
-		KeyHash:          keyHash,
+		FirstName:  d.FirstName,
+		LastName:   d.LastName,
+		Email:      strings.ToLower(d.Email),
+		PrivateKey: string(pem.EncodeToMemory(pemBlock)),
+		PublicKey: string(pem.EncodeToMemory(&pem.Block{
+			Type:  "PUBLIC KEY",
+			Bytes: cert,
+		})),
 		Moderator:        false,
 		RegistrationDate: time.Now(),
 	}
@@ -215,13 +221,23 @@ func createUser(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 		return
 	}
 
+	keyHash, err := GetUserKeyHash(&user)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		out.Encode(map[string]interface{}{
+			"error": "failed to hash public RSA key",
+			"trace": err.Error(),
+		})
+		return
+	}
+
 	w.WriteHeader(http.StatusOK)
 	out.Encode(map[string]interface{}{
 		"id":                key.Encode(),
 		"first_name":        user.FirstName,
 		"last_name":         user.LastName,
 		"email":             user.Email,
-		"key_hash":          user.KeyHash,
+		"key_hash":          keyHash,
 		"moderator":         strconv.FormatBool(user.Moderator),
 		"registration_date": user.RegistrationDate.String(),
 	})
@@ -233,13 +249,23 @@ func getUser(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 		return
 	}
 
+	keyHash, err := GetUserKeyHash(user)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		out.Encode(map[string]interface{}{
+			"error": "failed to hash public RSA key",
+			"trace": err.Error(),
+		})
+		return
+	}
+
 	w.WriteHeader(http.StatusOK)
 	out.Encode(map[string]interface{}{
 		"id":                key.Encode(),
 		"first_name":        user.FirstName,
 		"last_name":         user.LastName,
 		"email":             user.Email,
-		"key_hash":          user.KeyHash,
+		"key_hash":          keyHash,
 		"moderator":         strconv.FormatBool(user.Moderator),
 		"registration_date": user.RegistrationDate.String(),
 	})
@@ -305,13 +331,23 @@ func editUser(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 		return
 	}
 
+	keyHash, err := GetUserKeyHash(user)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		out.Encode(map[string]interface{}{
+			"error": "failed to hash public RSA key",
+			"trace": err.Error(),
+		})
+		return
+	}
+
 	w.WriteHeader(http.StatusOK)
 	out.Encode(map[string]interface{}{
 		"id":                key.Encode(),
 		"first_name":        user.FirstName,
 		"last_name":         user.LastName,
 		"email":             user.Email,
-		"key_hash":          user.KeyHash,
+		"key_hash":          keyHash,
 		"moderator":         strconv.FormatBool(user.Moderator),
 		"registration_date": user.RegistrationDate.String(),
 	})
@@ -335,13 +371,23 @@ func deleteUser(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 		return
 	}
 
+	keyHash, err := GetUserKeyHash(user)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		out.Encode(map[string]interface{}{
+			"error": "failed to hash public RSA key",
+			"trace": err.Error(),
+		})
+		return
+	}
+
 	w.WriteHeader(http.StatusOK)
 	out.Encode(map[string]interface{}{
 		"id":                key.Encode(),
 		"first_name":        user.FirstName,
 		"last_name":         user.LastName,
 		"email":             user.Email,
-		"key_hash":          user.KeyHash,
+		"key_hash":          keyHash,
 		"moderator":         strconv.FormatBool(user.Moderator),
 		"registration_date": user.RegistrationDate.String(),
 	})
@@ -358,5 +404,17 @@ func getUserPosts(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	out.Encode(map[string]interface{}{
 		"posts": []interface{}{},
+	})
+}
+
+func getUserCA(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
+	_, user, ok := GetUser(w, out, r)
+	if !ok {
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	out.Encode(map[string]interface{}{
+		"pem": user.PublicKey,
 	})
 }

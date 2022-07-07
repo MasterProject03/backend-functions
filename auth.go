@@ -116,9 +116,9 @@ func ParseToken(tokenString string, allowExpired bool, fetch bool) (*datastore.K
 		if !ok {
 			return nil, nil, fmt.Errorf("failed to retrieve user email: %w", err)
 		}
-		keyHash, ok := claims["key_hash"].(string)
+		publicKey, ok := claims["public_key"].(string)
 		if !ok {
-			return nil, nil, fmt.Errorf("failed to retrieve user key_hash: %w", err)
+			return nil, nil, fmt.Errorf("failed to retrieve user public_key: %w", err)
 		}
 		moderatorString, ok := claims["moderator"].(string)
 		if !ok {
@@ -141,7 +141,7 @@ func ParseToken(tokenString string, allowExpired bool, fetch bool) (*datastore.K
 			FirstName:        firstName,
 			LastName:         lastName,
 			Email:            email,
-			KeyHash:          keyHash,
+			PublicKey:        publicKey,
 			Moderator:        moderator,
 			RegistrationDate: registrationDate,
 		}
@@ -179,13 +179,23 @@ func getMe(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 		return
 	}
 
+	keyHash, err := GetUserKeyHash(user)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		out.Encode(map[string]interface{}{
+			"error": "failed to hash public RSA key",
+			"trace": err.Error(),
+		})
+		return
+	}
+
 	w.WriteHeader(http.StatusOK)
 	out.Encode(map[string]interface{}{
 		"id":                key.Encode(),
 		"first_name":        user.FirstName,
 		"last_name":         user.LastName,
 		"email":             user.Email,
-		"key_hash":          user.KeyHash,
+		"key_hash":          keyHash,
 		"moderator":         strconv.FormatBool(user.Moderator),
 		"registration_date": user.RegistrationDate.String(),
 	})
@@ -217,7 +227,7 @@ func login(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 		return
 	}
 
-	pemBlock, _ := pem.Decode(user.PrivateKey)
+	pemBlock, _ := pem.Decode([]byte(user.PrivateKey))
 	_, err = x509.DecryptPEMBlock(pemBlock, []byte(d.Password))
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -236,7 +246,7 @@ func login(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 		"first_name":        user.FirstName,
 		"last_name":         user.LastName,
 		"email":             user.Email,
-		"key_hash":          user.KeyHash,
+		"public_key":        user.PublicKey,
 		"moderator":         strconv.FormatBool(user.Moderator),
 		"registration_date": user.RegistrationDate.String(),
 	})
@@ -319,7 +329,7 @@ func refreshToken(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 		"first_name":        user.FirstName,
 		"last_name":         user.LastName,
 		"email":             user.Email,
-		"key_hash":          user.KeyHash,
+		"public_key":        user.PublicKey,
 		"moderator":         strconv.FormatBool(user.Moderator),
 		"registration_date": user.RegistrationDate.String(),
 	})
