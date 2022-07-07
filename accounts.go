@@ -47,18 +47,17 @@ func AccountsHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func GetUserByEmail(email string) (*datastore.Key, *User, error) {
-	ctx := context.Background()
 	query := datastore.NewQuery("User").
 		FilterField("Email", "=", strings.ToLower(email)).
 		Limit(1)
+	ctx := context.Background()
 	it := datastoreClient.Run(ctx, query)
 
 	var user User
 	key, err := it.Next(&user)
 	if err == iterator.Done {
 		return nil, nil, nil
-	}
-	if err != nil {
+	} else if err != nil {
 		return nil, nil, err
 	}
 
@@ -66,13 +65,13 @@ func GetUserByEmail(email string) (*datastore.Key, *User, error) {
 }
 
 func GetUserById(id string) (*datastore.Key, *User, error) {
-	ctx := context.Background()
 	key, err := datastore.DecodeKey(id)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	var user User
+	ctx := context.Background()
 	if err = datastoreClient.Get(ctx, key, &user); err != nil {
 		return nil, nil, err
 	}
@@ -141,8 +140,7 @@ func createUser(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 			"trace": err.Error(),
 		})
 		return
-	}
-	if existingUser != nil {
+	} else if existingUser != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		out.Encode(map[string]interface{}{
 			"error": "email already taken",
@@ -262,6 +260,8 @@ func editUser(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 		return
 	}
 
+	// TODO: Check if authenticated as user or moderator
+
 	if d.FirstName != "" && d.FirstName != user.FirstName {
 		user.FirstName = d.FirstName
 	}
@@ -322,6 +322,8 @@ func deleteUser(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 	if !ok {
 		return
 	}
+
+	// TODO: Check if authenticated as user or moderator
 
 	ctx := context.Background()
 	if err := datastoreClient.Delete(ctx, key); err != nil {
