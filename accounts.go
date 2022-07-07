@@ -9,7 +9,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
-	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -57,7 +56,7 @@ func GetUserByEmail(email string) (*datastore.Key, *User, error) {
 	var user User
 	key, err := it.Next(&user)
 	if err == iterator.Done {
-		return nil, nil, fmt.Errorf("no user with email %s", email)
+		return nil, nil, nil
 	}
 	if err != nil {
 		return nil, nil, err
