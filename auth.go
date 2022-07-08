@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -37,6 +36,10 @@ func GetAuthKey() (*rsa.PrivateKey, error) {
 	pemString := os.Getenv("JWT_PRIVATE_KEY")
 
 	pemBlock, _ := pem.Decode([]byte(pemString))
+	if pemBlock == nil {
+		return nil, fmt.Errorf("invalid private key format")
+	}
+
 	privateKey, err := x509.ParsePKCS1PrivateKey(pemBlock.Bytes)
 	if err != nil {
 		return nil, err
@@ -106,51 +109,44 @@ func ParseToken(tokenString string, allowExpired bool, fetch bool) (*datastore.K
 
 		firstName, ok := claims["first_name"].(string)
 		if !ok {
-			return nil, nil, fmt.Errorf("failed to retrieve user first_name: %w", err)
+			return nil, nil, fmt.Errorf("failed to retrieve user field first_name")
 		}
 		lastName, ok := claims["last_name"].(string)
 		if !ok {
-			return nil, nil, fmt.Errorf("failed to retrieve user last_name: %w", err)
+			return nil, nil, fmt.Errorf("failed to retrieve user field last_name")
 		}
 		email, ok := claims["email"].(string)
 		if !ok {
-			return nil, nil, fmt.Errorf("failed to retrieve user email: %w", err)
+			return nil, nil, fmt.Errorf("failed to retrieve user field email")
 		}
 		publicKey, ok := claims["public_key"].(string)
 		if !ok {
-			return nil, nil, fmt.Errorf("failed to retrieve user public_key: %w", err)
+			return nil, nil, fmt.Errorf("failed to retrieve user field public_key")
 		}
-		moderatorString, ok := claims["moderator"].(string)
+		moderator, ok := claims["moderator"].(bool)
 		if !ok {
-			return nil, nil, fmt.Errorf("failed to retrieve user moderator: %w", err)
+			return nil, nil, fmt.Errorf("failed to retrieve user field moderator")
 		}
-		moderator, err := strconv.ParseBool(moderatorString)
-		if err != nil {
-			return nil, nil, err
-		}
-		registrationDateString, ok := claims["registration_date"].(string)
+		registrationDate, ok := claims["registration_date"].(float64)
 		if !ok {
-			return nil, nil, fmt.Errorf("failed to retrieve user registration_date: %w", err)
-		}
-		registrationDate, err := time.Parse("2006-01-02 15:04:05.999999999 -0700 MST", registrationDateString)
-		if err != nil {
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("failed to retrieve user field registration_date")
 		}
 
 		user = &User{
 			FirstName:        firstName,
 			LastName:         lastName,
 			Email:            email,
+			PrivateKey:       "",
 			PublicKey:        publicKey,
 			Moderator:        moderator,
-			RegistrationDate: registrationDate,
+			RegistrationDate: time.Unix(int64(registrationDate), 0),
 		}
 	}
 
 	return key, user, nil
 }
 
-func GetAuthUser(r *http.Request) (*datastore.Key, *User, error) {
+func GetAuthUser(r *http.Request, fetch bool) (*datastore.Key, *User, error) {
 	header := r.Header.Get("Authorization")
 	if header == "" {
 		return nil, nil, fmt.Errorf("missing authorization header")
@@ -160,7 +156,7 @@ func GetAuthUser(r *http.Request) (*datastore.Key, *User, error) {
 
 	token := strings.TrimPrefix(header, "Bearer ")
 
-	key, user, err := ParseToken(token, false, false)
+	key, user, err := ParseToken(token, false, fetch)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -169,7 +165,7 @@ func GetAuthUser(r *http.Request) (*datastore.Key, *User, error) {
 }
 
 func getMe(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
-	key, user, err := GetAuthUser(r)
+	key, user, err := GetAuthUser(r, false)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		out.Encode(map[string]interface{}{
@@ -196,8 +192,8 @@ func getMe(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 		"last_name":         user.LastName,
 		"email":             user.Email,
 		"key_hash":          keyHash,
-		"moderator":         strconv.FormatBool(user.Moderator),
-		"registration_date": user.RegistrationDate.String(),
+		"moderator":         user.Moderator,
+		"registration_date": user.RegistrationDate.Unix(),
 	})
 }
 
@@ -228,6 +224,15 @@ func login(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 	}
 
 	pemBlock, _ := pem.Decode([]byte(user.PrivateKey))
+	if pemBlock == nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		out.Encode(map[string]interface{}{
+			"error": "incorrect password",
+			"trace": "invalid private key format",
+		})
+		return
+	}
+
 	_, err = x509.DecryptPEMBlock(pemBlock, []byte(d.Password))
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -238,7 +243,7 @@ func login(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 		return
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodRS512, jwt.MapClaims{
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
 		"iss":               "mackee-news",
 		"iat":               time.Now().Unix(),
 		"exp":               time.Now().Add(time.Hour * 24).Unix(),
@@ -247,8 +252,8 @@ func login(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 		"last_name":         user.LastName,
 		"email":             user.Email,
 		"public_key":        user.PublicKey,
-		"moderator":         strconv.FormatBool(user.Moderator),
-		"registration_date": user.RegistrationDate.String(),
+		"moderator":         user.Moderator,
+		"registration_date": user.RegistrationDate.Unix(),
 	})
 
 	jwtPrivateKey, err := GetAuthKey()
@@ -321,7 +326,7 @@ func refreshToken(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 		return
 	}
 
-	newToken := jwt.NewWithClaims(jwt.SigningMethodRS512, jwt.MapClaims{
+	newToken := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
 		"iss":               "mackee-news",
 		"iat":               time.Now().Unix(),
 		"exp":               time.Now().Add(time.Hour * 24).Unix(),
@@ -330,8 +335,8 @@ func refreshToken(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 		"last_name":         user.LastName,
 		"email":             user.Email,
 		"public_key":        user.PublicKey,
-		"moderator":         strconv.FormatBool(user.Moderator),
-		"registration_date": user.RegistrationDate.String(),
+		"moderator":         user.Moderator,
+		"registration_date": user.RegistrationDate.Unix(),
 	})
 
 	jwtPrivateKey, err := GetAuthKey()

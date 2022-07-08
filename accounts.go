@@ -9,8 +9,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -98,6 +98,9 @@ func GetUser(w http.ResponseWriter, out *json.Encoder, r *http.Request) (*datast
 
 func GetUserKeyHash(user *User) (*string, error) {
 	pemBlock, _ := pem.Decode([]byte(user.PublicKey))
+	if pemBlock == nil {
+		return nil, fmt.Errorf("invalid public key format")
+	}
 
 	hash := sha256.New()
 	_, err := hash.Write(pemBlock.Bytes)
@@ -238,8 +241,8 @@ func createUser(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 		"last_name":         user.LastName,
 		"email":             user.Email,
 		"key_hash":          keyHash,
-		"moderator":         strconv.FormatBool(user.Moderator),
-		"registration_date": user.RegistrationDate.String(),
+		"moderator":         user.Moderator,
+		"registration_date": user.RegistrationDate.Unix(),
 	})
 }
 
@@ -266,8 +269,8 @@ func getUser(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 		"last_name":         user.LastName,
 		"email":             user.Email,
 		"key_hash":          keyHash,
-		"moderator":         strconv.FormatBool(user.Moderator),
-		"registration_date": user.RegistrationDate.String(),
+		"moderator":         user.Moderator,
+		"registration_date": user.RegistrationDate.Unix(),
 	})
 }
 
@@ -348,8 +351,8 @@ func editUser(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 		"last_name":         user.LastName,
 		"email":             user.Email,
 		"key_hash":          keyHash,
-		"moderator":         strconv.FormatBool(user.Moderator),
-		"registration_date": user.RegistrationDate.String(),
+		"moderator":         user.Moderator,
+		"registration_date": user.RegistrationDate.Unix(),
 	})
 }
 
@@ -388,8 +391,8 @@ func deleteUser(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 		"last_name":         user.LastName,
 		"email":             user.Email,
 		"key_hash":          keyHash,
-		"moderator":         strconv.FormatBool(user.Moderator),
-		"registration_date": user.RegistrationDate.String(),
+		"moderator":         user.Moderator,
+		"registration_date": user.RegistrationDate.Unix(),
 	})
 }
 

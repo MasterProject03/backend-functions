@@ -87,7 +87,7 @@ func addSource(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 		return
 	}
 
-	_, user, err := GetAuthUser(r)
+	_, user, err := GetAuthUser(r, false)
 	if err != nil {
 		w.WriteHeader(http.StatusUnauthorized)
 		out.Encode(map[string]interface{}{
@@ -154,7 +154,7 @@ func deleteSource(w http.ResponseWriter, out *json.Encoder, r *http.Request) {
 		return
 	}
 
-	_, user, err := GetAuthUser(r)
+	_, user, err := GetAuthUser(r, false)
 	if err != nil {
 		w.WriteHeader(http.StatusUnauthorized)
 		out.Encode(map[string]interface{}{
